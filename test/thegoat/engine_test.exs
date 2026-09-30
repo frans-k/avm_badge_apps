@@ -107,18 +107,18 @@ defmodule Badge.App.Thegoat.EngineTest do
 
   describe "step/4" do
     test "holding forward moves along the direction" do
-      moved = Engine.step(Engine.grid(), Engine.new(), ["Up"], 200)
+      moved = Engine.step(Engine.grid(), Engine.new(), [~c"Up"], 200)
 
       assert moved.x > Engine.new().x
       assert moved.y == Engine.new().y
     end
 
     test "turning changes only the angle, at a rate that does not depend on frame time" do
-      one = Engine.step(Engine.grid(), Engine.new(), ["Right"], 1000)
+      one = Engine.step(Engine.grid(), Engine.new(), [~c"Right"], 1000)
 
       halves =
         Enum.reduce(1..10, Engine.new(), fn _, p ->
-          Engine.step(Engine.grid(), p, ["Right"], 100)
+          Engine.step(Engine.grid(), p, [~c"Right"], 100)
         end)
 
       assert one.a == 40_000
@@ -131,7 +131,7 @@ defmodule Badge.App.Thegoat.EngineTest do
       # Facing west, into the wall column x = 0, for long enough to cross it.
       west =
         Enum.reduce(1..50, %{Engine.new() | a: 128 * 256}, fn _, p ->
-          Engine.step(grid, p, ["Up"], 100)
+          Engine.step(grid, p, [~c"Up"], 100)
         end)
 
       # Never inside the wall cell (x < 256), with room for the player's radius.
@@ -139,23 +139,10 @@ defmodule Badge.App.Thegoat.EngineTest do
 
       # Walking diagonally into the corner slides along a wall instead of sticking.
       corner = %{x: @cell + 100, y: 2 * @cell, a: 96 * 256}
-      slid = Enum.reduce(1..20, corner, fn _, p -> Engine.step(grid, p, ["Up"], 100) end)
+      slid = Enum.reduce(1..20, corner, fn _, p -> Engine.step(grid, p, [~c"Up"], 100) end)
 
       assert slid.x >= @cell + 60
       assert slid.y != corner.y
-    end
-
-    test "labels as charlists mean the same as binaries" do
-      grid = Engine.grid()
-      # Columns 9 to 14 are open in rows 8 to 10, so every direction can move.
-      start = %{x: 11 * @cell + 128, y: 9 * @cell + 128, a: 0}
-
-      for label <- ["Up", "S", "Q", "E", "D", "Left"] do
-        binary = Engine.step(grid, start, [label], 200)
-
-        assert Engine.step(grid, start, [String.to_charlist(label)], 200) == binary
-        refute binary == start
-      end
     end
 
     test "no keys held means no movement" do

@@ -506,16 +506,6 @@ defmodule Badge.App.Thegoat.Engine do
   defp keys([], bits), do: bits
   defp keys([label | rest], bits), do: keys(rest, bits ||| key(label))
 
-  defp key("Up"), do: @forward
-  defp key("W"), do: @forward
-  defp key("Down"), do: @back
-  defp key("S"), do: @back
-  defp key("E"), do: @right
-  defp key("Q"), do: @left
-  defp key("Right"), do: @turn_right
-  defp key("D"), do: @turn_right
-  defp key("Left"), do: @turn_left
-  defp key("A"), do: @turn_left
   # The badge firmware's keyboard reports labels as charlists.
   defp key(~c"Up"), do: @forward
   defp key(~c"W"), do: @forward
