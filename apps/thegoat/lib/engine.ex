@@ -98,10 +98,12 @@ defmodule Badge.App.Thegoat.Engine do
   def new, do: %{x: 384, y: 384, a: 0}
 
   # Where a badge comes back after being caught: the start, or the far corner
-  # facing into the map, whichever is farther from the goat (as the crow flies).
+  # facing north, up the long open corridor of column 13, whichever is farther from the
+  # goat (as the crow flies). West, which the corner once faced, is a pillar half a cell
+  # away that fills the screen with one wall.
   # Without a goat, the start.
   @start %{x: 384, y: 384, a: 0}
-  @corner %{x: 13 * 256 + 128, y: 13 * 256 + 128, a: 32_768}
+  @corner %{x: 13 * 256 + 128, y: 13 * 256 + 128, a: 49_152}
 
   def respawn({gx, gy, _hunting}) do
     if apart(@start, gx, gy) >= apart(@corner, gx, gy), do: @start, else: @corner

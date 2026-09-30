@@ -162,4 +162,39 @@ defmodule Badge.App.Thegoat.EngineTest do
       assert Engine.step(Engine.grid(), Engine.new(), [], 500) == Engine.new()
     end
   end
+
+  describe "respawn/1" do
+    test "without a goat it is the start, as a new player" do
+      assert Engine.respawn(nil) == Engine.new()
+    end
+
+    test "a goat near the start sends the badge to the far corner, facing north" do
+      assert %{x: 3456, y: 3456, a: 49_152} = Engine.respawn({500, 500, true})
+    end
+
+    test "a goat near the far corner leaves the badge at the start" do
+      assert Engine.respawn({3400, 3400, false}) == Engine.new()
+    end
+
+    test "it is the same whether the goat is hunting or wandering" do
+      assert Engine.respawn({500, 500, true}) == Engine.respawn({500, 500, false})
+    end
+
+    test "either place looks down a corridor, not at a wall" do
+      # A wall half a cell away is 240 pixels tall and fills the screen; 8 cells away it is 30.
+      for goat <- [{500, 500, true}, {3400, 3400, true}] do
+        assert {_x, _top, _w, height} = centre_wall(Engine.respawn(goat))
+        assert height <= 30
+      end
+    end
+
+    test "either place is open floor" do
+      grid = Engine.grid()
+
+      for goat <- [{500, 500, true}, {3400, 3400, true}] do
+        %{x: x, y: y} = Engine.respawn(goat)
+        assert elem(grid, div(y, 256) * 16 + div(x, 256)) == 0
+      end
+    end
+  end
 end
