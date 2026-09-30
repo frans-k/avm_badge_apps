@@ -21,85 +21,64 @@ defmodule Badge.App.Thegoat.MenuTest do
     do: Enum.reduce(labels, menu, fn label, m -> elem(Menu.handle_key(m, label), 1) end)
 
   describe "the first screen" do
-    test "offers the game, the controls and the status" do
-      assert texts(Menu.new()) |> Enum.take(4) == [
-               "GOAT GAME",
-               "> Play",
-               "  Controls",
-               "  Status"
-             ]
+    test "offers the game and the status" do
+      assert texts(Menu.new()) |> Enum.take(3) == ["GOAT GAME", "> Play", "  Status"]
     end
 
     test "Up and Down (or W and S) move the cursor, and it wraps" do
       menu = Menu.new()
-      assert press(menu, ["Down"]).cursor == 1
-      assert press(menu, ["Down", "Down", "Down"]).cursor == 0
-      assert press(menu, ["Up"]).cursor == 2
-      assert press(menu, ["S", "S", "W"]).cursor == 1
+      assert press(menu, [{:move, :down}]).cursor == 1
+      assert press(menu, [{:move, :down}, {:move, :down}]).cursor == 0
+      assert press(menu, [{:move, :up}]).cursor == 1
+      assert press(menu, [{:char, ?s}, {:char, ?w}, {:char, ?s}]).cursor == 1
     end
 
     test "Enter or Space on the game starts it" do
-      assert Menu.handle_key(Menu.new(), "Enter") == :play
-      assert Menu.handle_key(Menu.new(), "Space") == :play
+      assert Menu.handle_key(Menu.new(), {:edit, :newline}) == :play
+      assert Menu.handle_key(Menu.new(), {:char, ?\s}) == :play
     end
 
-    test "Enter on the controls or the status opens that screen" do
-      assert {:ok, %{screen: :controls}} =
-               Menu.handle_key(press(Menu.new(), ["Down"]), "Enter")
-
-      assert {:ok, %{screen: :status}} =
-               Menu.handle_key(press(Menu.new(), ["Down", "Down"]), "Space")
+    test "Enter or Space on the status opens that screen" do
+      assert {:ok, %{screen: :status}} = Menu.handle_key(press(Menu.new(), [{:move, :down}]), {:edit, :newline})
+      assert {:ok, %{screen: :status}} = Menu.handle_key(press(Menu.new(), [{:move, :down}]), {:char, ?\s})
     end
 
-    test "Esc does nothing here: the menu is where a badge is when it is out of the game" do
-      assert Menu.handle_key(Menu.new(), "Esc") == {:ok, Menu.new()}
+    test "Esc is not taken on the first screen, so the firmware takes the badge home" do
+      assert Menu.handle_key(Menu.new(), {:nav, :home}) == :ignore
     end
 
-    test "keys it has no use for change nothing" do
+    test "keys it has no use for are ignored, so the firmware still gets them" do
       menu = Menu.new()
 
-      for label <- ["Q", "Tab", "Fn", "1", "Left"],
-          do: assert(Menu.handle_key(menu, label) == {:ok, menu})
+      for label <- [{:char, ?q}, {:char, ?1}, {:edit, :backspace}, {:move, :left}],
+          do: assert(Menu.handle_key(menu, label) == :ignore)
     end
   end
 
   describe "the other screens" do
-    test "the controls say how to move, and how to get back" do
-      lines = texts(%{Menu.new() | screen: :controls})
-      assert "CONTROLS" in lines
-      assert Enum.any?(lines, &(&1 =~ "Arrows or WASD"))
-      assert Enum.any?(lines, &(&1 =~ "Esc"))
-    end
-
     test "the status shows what it is told, on one line each" do
       lines = texts(%{Menu.new() | screen: :status})
       assert "STATUS" in lines
       for line <- Map.values(@info), do: assert(line in lines)
     end
 
-    test "a long line is cut to the screen, not drawn off it" do
-      long = %{@info | wifi: "Wifi: " <> String.duplicate("x", 60)}
-      shown = texts(%{Menu.new() | screen: :status}, long)
-      assert Enum.all?(shown, &(byte_size(&1) <= 34))
-    end
-
     test "Esc, Enter, Space or Left go back to the first screen, keeping the cursor" do
-      menu = %{press(Menu.new(), ["Down", "Enter"]) | screen: :controls}
+      menu = press(Menu.new(), [{:move, :down}, {:edit, :newline}])
       assert menu.cursor == 1
 
-      for label <- ["Esc", "Enter", "Space", "Left"] do
+      for label <- [{:nav, :home}, {:edit, :newline}, {:char, ?\s}, {:move, :left}] do
         assert {:ok, %{screen: :main, cursor: 1}} = Menu.handle_key(menu, label)
       end
     end
 
     test "Esc on a sub screen goes back even when a game is going, and does not resume it" do
-      assert {:ok, %{screen: :main}} = Menu.handle_key(%{Menu.new() | screen: :status}, "Esc")
+      assert {:ok, %{screen: :main}} = Menu.handle_key(%{Menu.new() | screen: :status}, {:nav, :home})
     end
   end
 
   describe "the display list" do
     test "has the background last, so everything else is drawn over it" do
-      for screen <- [:main, :controls, :status] do
+      for screen <- [:main, :status] do
         assert {:rect, 0, 0, @width, @height, _colour} =
                  List.last(items(%{Menu.new() | screen: screen}))
       end
@@ -113,7 +92,7 @@ defmodule Badge.App.Thegoat.MenuTest do
     end
 
     test "every item is on the screen" do
-      for screen <- [:main, :controls, :status] do
+      for screen <- [:main, :status] do
         for item <- items(%{Menu.new() | screen: screen}) do
           case item do
             {:text, x, y, _font, _fg, _bg, text} ->

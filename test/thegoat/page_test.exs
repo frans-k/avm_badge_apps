@@ -213,24 +213,23 @@ defmodule Badge.App.Thegoat.PageTest do
       assert state.player == Badge.App.Thegoat.Engine.new()
     end
 
-    test "Down and W S move, Enter on Controls and Status opens them, Esc goes back" do
+    test "Down and W S move, Enter on Status opens it, Esc goes back" do
       {:ok, state} = Page.handle_key({:move, :down}, Page.init())
-      assert "> Controls" in texts(state)
+      assert "> Status" in texts(state)
 
       {:ok, state} = Page.handle_key({:edit, :newline}, state)
-      assert "CONTROLS" in texts(state)
+      assert "STATUS" in texts(state)
+      assert Enum.any?(texts(state), &String.starts_with?(&1, "Relay: offline"))
 
       # Esc on a screen that is not the first goes back to it, and is taken.
       assert {:ok, %{menu: %{screen: :main}}} = Page.handle_key({:nav, :home}, state)
 
       {:ok, state} = Page.handle_key({:char, ?s}, Page.init())
-      {:ok, state} = Page.handle_key({:char, ?s}, state)
+      {:ok, state} = Page.handle_key({:char, ?w}, state)
+      assert "> Play" in texts(state)
+      {:ok, state} = Page.handle_key({:char, ?S}, state)
       {:ok, state} = Page.handle_key({:char, ?\s}, state)
       assert "STATUS" in texts(state)
-      assert Enum.any?(texts(state), &String.starts_with?(&1, "Relay: offline"))
-
-      {:ok, state} = Page.handle_key({:char, ?w}, %{Page.init() | menu: Menu.new()})
-      assert "> Status" in texts(state)
     end
 
     test "Esc on the menu's first screen is not taken, so it goes home" do

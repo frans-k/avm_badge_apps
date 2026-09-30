@@ -114,30 +114,14 @@ defmodule Badge.App.Thegoat.Page do
   def handle_key({:nav, :home}, %{mode: :menu, menu: %{screen: :main}}), do: :ignore
 
   def handle_key(event, %{mode: :menu, menu: menu} = state) do
-    case label(event) do
-      nil ->
-        :ignore
-
-      label ->
-        case Menu.handle_key(menu, label) do
-          :play -> {:ok, play(state)}
-          {:ok, menu} -> {:ok, %{state | menu: menu}}
-        end
+    case Menu.handle_key(menu, event) do
+      :play -> {:ok, play(state)}
+      {:ok, menu} -> {:ok, %{state | menu: menu}}
+      :ignore -> :ignore
     end
   end
 
   def handle_key(_event, _state), do: :ignore
-
-  # The menu reads labels as the standalone game does, and this page gets events.
-  defp label({:move, :up}), do: "Up"
-  defp label({:move, :down}), do: "Down"
-  defp label({:move, :left}), do: "Left"
-  defp label({:edit, :newline}), do: "Enter"
-  defp label({:nav, :home}), do: "Esc"
-  defp label({:char, ?\s}), do: "Space"
-  defp label({:char, c}) when c == ?w or c == ?W, do: "W"
-  defp label({:char, c}) when c == ?s or c == ?S, do: "S"
-  defp label(_event), do: nil
 
   # Into the game, as a new life: the start, a room joined, and the count from nothing.
   defp play(state) do
@@ -253,16 +237,9 @@ defmodule Badge.App.Thegoat.Page do
 
   # What the status screen says, a line each.
   defp wifi_line do
-    case wifi_status() do
-      %{radio: :connected} -> "Wifi: connected"
-      _not_connected -> "Wifi: not connected"
-    end
-  end
-
-  defp wifi_status do
-    Wifi.status()
+    if Wifi.status().radio == :connected, do: "Wifi: connected", else: "Wifi: not connected"
   catch
-    _kind, _reason -> nil
+    _kind, _reason -> "Wifi: not connected"
   end
 
   defp relay_line(:up, others), do: "Relay: online, " <> :erlang.integer_to_binary(others + 1) <> " playing"

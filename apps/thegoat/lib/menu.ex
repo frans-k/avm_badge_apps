@@ -10,7 +10,7 @@ defmodule Badge.App.Thegoat.Menu do
   game: the page leaves the relay's room when Esc opens it, and Play starts a new life in
   a room.
 
-  Three entries: the game, the keys, and where the badge stands with wifi and the relay.
+  Two entries: the game, and where the badge stands with wifi and the relay.
   """
 
   # The default font is 8 pixels to a character, and 16 high.
@@ -22,123 +22,73 @@ defmodule Badge.App.Thegoat.Menu do
   @title 0xFFFF00
   @text 0xFFFFFF
   @dim 0x9AA8B8
-  @good 0x60E080
-
-  # The widest entry, "> Controls", so the block of them sits in the middle.
-  @entry_chars 10
-  @rows [:play, :controls, :status]
-  @first_y 84
-  @pitch 32
 
   @doc "A menu on its first screen."
   def new, do: %{screen: :main, cursor: 0}
 
   @doc """
-  What a key label does: `:play` when the game should be shown, otherwise `{:ok, menu}`
-  with whatever changed. Keys it has no use for change nothing.
+  What a key event does, as `Badge.Page.handle_key/2` gets it: `:play` when the game should be
+  shown, `{:ok, menu}` with whatever changed, or `:ignore` for a key it has no use for, so the
+  firmware still gets it (the shape keys go to other pages).
   """
-  def handle_key(%{screen: :main} = menu, label) do
+  def handle_key(%{screen: :main, cursor: cursor} = menu, event) do
     cond do
-      member?(label, ["Up", "W"]) ->
-        {:ok, %{menu | cursor: rem(menu.cursor + length(@rows) - 1, length(@rows))}}
-
-      member?(label, ["Down", "S"]) ->
-        {:ok, %{menu | cursor: rem(menu.cursor + 1, length(@rows))}}
-
-      member?(label, ["Enter", "Space"]) ->
-        pick(menu, :lists.nth(menu.cursor + 1, @rows))
-
-      true ->
-        {:ok, menu}
+      step?(event) -> {:ok, %{menu | cursor: 1 - cursor}}
+      not pick?(event) -> :ignore
+      cursor == 0 -> :play
+      true -> {:ok, %{menu | screen: :status}}
     end
   end
 
-  def handle_key(menu, label) do
-    if member?(label, ["Esc", "Enter", "Space", "Left", "Bksp"]),
+  def handle_key(menu, event) do
+    if pick?(event) or event == {:nav, :home} or event == {:move, :left},
       do: {:ok, %{menu | screen: :main}},
-      else: {:ok, menu}
+      else: :ignore
   end
 
-  # AtomVM has no Enum to speak of, so the lists here are :lists and plain recursion.
-  defp member?(label, labels), do: :lists.member(label, labels)
+  # Up or Down, W or S.
+  defp step?({:move, dir}), do: dir == :up or dir == :down
+  defp step?({:char, c}), do: c == ?w or c == ?W or c == ?s or c == ?S
+  defp step?(_event), do: false
 
-  defp pick(_menu, :play), do: :play
-  defp pick(menu, screen), do: {:ok, %{menu | screen: screen}}
+  # Enter or Space.
+  defp pick?(event), do: event == {:edit, :newline} or event == {:char, ?\s}
 
   @doc """
   The display list. `info` is what the status screen says: `%{wifi: text, relay: text,
-  badge: text}`, each already short enough for a line.
+  badge: text}`, each short enough for a line.
   """
-  def items(menu, info, width, height),
-    do: screen(menu, info, width, height) ++ [back(width, height)]
-
-  defp screen(%{screen: :main} = menu, _info, width, height) do
+  def items(%{screen: :main, cursor: cursor}, _info, width, height) do
     [text(width, 24, @title, "GOAT GAME")] ++
-      rows(@rows, 0, menu, width) ++ [text(width, height - 24, @dim, "Up Down  Enter")]
+      entry(width, 84, cursor == 0, "Play") ++
+      entry(width, 116, cursor == 1, "Status") ++
+      [text(width, height - 24, @dim, "Up Down  Enter"), back(width, height)]
   end
 
-  defp screen(%{screen: :controls}, _info, width, height) do
-    lines = [
-      "Arrows or WASD  move, turn",
-      "Q and E         strafe",
-      "Esc             menu"
+  def items(%{screen: :status}, info, width, height) do
+    [
+      text(width, 24, @title, "STATUS"),
+      text(width, 84, @text, info.wifi),
+      text(width, 108, @text, info.relay),
+      text(width, 132, @text, info.badge),
+      text(width, height - 24, @dim, "Esc  back"),
+      back(width, height)
     ]
-
-    [text(width, 24, @title, "CONTROLS")] ++
-      lines(lines, 84, @text, width) ++ [text(width, height - 24, @dim, "Esc  back")]
   end
 
-  defp screen(%{screen: :status}, info, width, height) do
-    [text(width, 24, @title, "STATUS")] ++
-      lines([info.wifi, info.relay, info.badge], 84, @text, width) ++
-      [text(width, height - 24, @dim, "Esc  back")]
-  end
+  defp text(width, y, colour, text),
+    do: {:text, div(width - byte_size(text) * @char, 2), y, :default16px, colour, :transparent, text}
 
-  defp name(:play), do: "Play"
-  defp name(:controls), do: "Controls"
-  defp name(:status), do: "Status"
-
-  # One entry a row, the selected one marked and with a band behind it.
-  defp rows([], _index, _menu, _width), do: []
-
-  defp rows([row | rest], index, menu, width) do
-    y = @first_y + index * @pitch
-    selected = index == menu.cursor
-    label = if selected, do: "> " <> name(row), else: "  " <> name(row)
+  # The selected entry is marked and has a band behind it, under its text. The entries share
+  # a left edge, so the marker is the only thing that moves.
+  defp entry(width, y, selected, name) do
+    x = div(width - 8 * @char, 2)
+    marked = if selected, do: "> ", else: "  "
     colour = if selected, do: @text, else: @dim
-    band = if selected, do: [band(width, y)], else: []
+    band = if selected, do: [{:rect, div(width, 2) - 100, y - 4, 200, @high + 8, @band}], else: []
 
-    [entry(width, y, colour, label)] ++ band ++ rows(rest, index + 1, menu, width)
+    [{:text, x, y, :default16px, colour, :transparent, marked <> name}] ++ band
   end
-
-  # Left aligned lines, one under the other, in the middle of the screen.
-  defp lines(lines, y, colour, width), do: lines(lines, y, colour, div(width - 34 * @char, 2), [])
-
-  defp lines([], _y, _colour, _left, acc), do: :lists.reverse(acc)
-
-  defp lines([line | rest], y, colour, left, acc) do
-    item = {:text, left, y, :default16px, colour(line, colour), :transparent, clip(line)}
-    lines(rest, y + @high + 8, colour, left, [item | acc])
-  end
-
-  # A line that says something good is green; the rest are plain.
-  defp colour("Relay: online" <> _rest, _colour), do: @good
-  defp colour(_line, colour), do: colour
-
-  # Forty characters is the width of the screen.
-  defp clip(line), do: binary_part(line, 0, min(byte_size(line), 34))
-
-  defp text(width, y, colour, text) do
-    x = div(width - byte_size(text) * @char, 2)
-    {:text, x, y, :default16px, colour, :transparent, text}
-  end
-
-  # The entries share a left edge, so the marker is the only thing that moves.
-  defp entry(width, y, colour, text),
-    do: {:text, div(width - @entry_chars * @char, 2), y, :default16px, colour, :transparent, text}
-
-  # Behind the selected entry, under its text.
-  defp band(width, y), do: {:rect, div(width, 2) - 100, y - 4, 200, @high + 8, @band}
 
   defp back(width, height), do: {:rect, 0, 0, width, height, @back}
 end
