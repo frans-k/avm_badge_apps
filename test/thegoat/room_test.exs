@@ -76,6 +76,10 @@ defmodule Badge.App.Thegoat.RoomTest do
       assert Room.respawn("1", "7") == ~s(["1","7","raycaster:lobby","respawn",{}])
     end
 
+    test "leave is a Phoenix frame with the join ref" do
+      assert Room.leave("1", "8") == ~s(["1","8","raycaster:lobby","phx_leave",{}])
+    end
+
     test "an empty room is an empty list, not an error" do
       assert Room.interpret(snap("[]"), 1) == {:players, [], nil}
     end

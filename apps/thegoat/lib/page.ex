@@ -3,7 +3,13 @@ defmodule Badge.App.Thegoat.Page do
   A Wolfenstein-style 3D view of a small map, drawn by `Badge.App.Thegoat.Engine`, with the other
   badges walking around in it.
 
-  Arrows or W A S D move and turn, Q and E strafe, Esc leaves. The keys are read as held
+  It starts in `Badge.App.Thegoat.Menu` (Play, Controls, Status). Esc in the game goes back
+  to it, and Esc on the menu's first screen leaves. Being in the menu means being out of the
+  game: the page leaves the relay's room, so nobody sees this badge and the goat cannot
+  catch it, and Play joins a room again and starts a new life with the count from zero. The
+  badge does not join a room until the first Play.
+
+  Arrows or W A S D move and turn, Q and E strafe. The keys are read as held
   rather than tapped, from `Badge.Keyboard.watch/1`, which says whenever the set changes: key events only arrive
   on press and auto-repeat, which is no way to walk.
 
@@ -25,11 +31,14 @@ defmodule Badge.App.Thegoat.Page do
 
   use Badge.Page
 
+  alias Badge.Identity
   alias Badge.Keyboard
   alias Badge.App.Thegoat.Link
   alias Badge.Theme
+  alias Badge.Wifi
   alias Badge.App.Thegoat.Engine
   alias Badge.App.Thegoat.GameOver
+  alias Badge.App.Thegoat.Menu
 
   # The view fills what is under the title bar.
   @view_w Theme.width()
@@ -57,7 +66,7 @@ defmodule Badge.App.Thegoat.Page do
   @impl true
   def refresh(_state), do: 100
 
-  # `at` is when the player last moved, or nil while standing still. `others` is what the
+  # `mode` is `:menu` or `:game`, and `menu` is where the menu is. `at` is when the player last moved, or nil while standing still. `others` is what the
   # relay last said, ready for the engine, and `goat` is where it says the goat is, or
   # nil. `sent` is when we last said where we are, `born` when this life began, and
   # `caught` is nil, or `{when, seconds lasted}` while the game over screen is up.
@@ -67,6 +76,8 @@ defmodule Badge.App.Thegoat.Page do
     Keyboard.watch(self())
 
     %{
+      mode: :menu,
+      menu: Menu.new(),
       held: [],
       player: Engine.new(),
       at: nil,
@@ -84,16 +95,67 @@ defmodule Badge.App.Thegoat.Page do
     Link.open()
     now = now()
 
-    case state.caught do
-      nil -> state |> walk(now) |> tell(now)
-      caught -> revive(state, caught, now)
+    case state do
+      %{mode: :menu} -> state
+      %{caught: nil} -> state |> walk(now) |> tell(now)
+      %{caught: caught} -> revive(state, caught, now)
     end
   end
+
+  # Esc in the game goes back to the menu, out of the room. Esc on the menu's first screen
+  # is not taken, so it goes home; on the others it goes back to the first.
+  @impl true
+  def handle_key({:nav, :home}, %{mode: :game} = state) do
+    Link.leave()
+
+    {:ok, %{state | mode: :menu, menu: Menu.new(), link: ready(state.link), others: [], goat: nil, at: nil}}
+  end
+
+  def handle_key({:nav, :home}, %{mode: :menu, menu: %{screen: :main}}), do: :ignore
+
+  def handle_key(event, %{mode: :menu, menu: menu} = state) do
+    case label(event) do
+      nil ->
+        :ignore
+
+      label ->
+        case Menu.handle_key(menu, label) do
+          :play -> {:ok, play(state)}
+          {:ok, menu} -> {:ok, %{state | menu: menu}}
+        end
+    end
+  end
+
+  def handle_key(_event, _state), do: :ignore
+
+  # The menu reads labels as the standalone game does, and this page gets events.
+  defp label({:move, :up}), do: "Up"
+  defp label({:move, :down}), do: "Down"
+  defp label({:move, :left}), do: "Left"
+  defp label({:edit, :newline}), do: "Enter"
+  defp label({:nav, :home}), do: "Esc"
+  defp label({:char, ?\s}), do: "Space"
+  defp label({:char, c}) when c == ?w or c == ?W, do: "W"
+  defp label({:char, c}) when c == ?s or c == ?S, do: "S"
+  defp label(_event), do: nil
+
+  # Into the game, as a new life: the start, a room joined, and the count from nothing.
+  defp play(state) do
+    Link.join()
+
+    %{state | mode: :game, player: Engine.new(), at: nil, sent: nil, born: now(), caught: nil}
+  end
+
+  defp ready(:up), do: :ready
+  defp ready(link), do: link
 
   @impl true
   def handle_info({:held, labels}, state), do: {:ok, %{state | held: labels}}
 
   def handle_info({:thegoat, :up}, state), do: {:ok, %{state | link: :up, sent: nil}}
+
+  def handle_info({:thegoat, :ready}, state),
+    do: {:ok, %{state | link: :ready, others: [], goat: nil}}
 
   def handle_info({:thegoat, :down}, state),
     do: {:ok, %{state | link: :off, others: [], goat: nil}}
@@ -115,6 +177,12 @@ defmodule Badge.App.Thegoat.Page do
   end
 
   @impl true
+  def render(%{mode: :menu, menu: menu, link: link, others: others}) do
+    info = %{wifi: wifi_line(), relay: relay_line(link, length(others)), badge: badge_line()}
+
+    shift(Menu.items(menu, info, @view_w, @view_h), Theme.content_top(), [])
+  end
+
   def render(%{caught: {_when, lasted}}) do
     scene = GameOver.items(Engine.grid(), lasted, @view_w, @view_h)
 
@@ -170,6 +238,7 @@ defmodule Badge.App.Thegoat.Page do
   end
 
   defp status(:off, _others, _goat, _born), do: line("offline")
+  defp status(:ready, _others, _goat, _born), do: line("connecting")
 
   defp status(:up, others, nil, _born),
     do: line("online, " <> :erlang.integer_to_binary(others + 1) <> " playing")
@@ -180,6 +249,30 @@ defmodule Badge.App.Thegoat.Page do
         :erlang.integer_to_binary(others + 1) <>
         " playing, alive " <> :erlang.integer_to_binary(div(now() - born, 1000)) <> " s"
     )
+  end
+
+  # What the status screen says, a line each.
+  defp wifi_line do
+    case wifi_status() do
+      %{radio: :connected} -> "Wifi: connected"
+      _not_connected -> "Wifi: not connected"
+    end
+  end
+
+  defp wifi_status do
+    Wifi.status()
+  catch
+    _kind, _reason -> nil
+  end
+
+  defp relay_line(:up, others), do: "Relay: online, " <> :erlang.integer_to_binary(others + 1) <> " playing"
+  defp relay_line(:ready, _others), do: "Relay: ready"
+  defp relay_line(:off, _others), do: "Relay: offline"
+
+  defp badge_line do
+    "Badge: " <> Identity.format(Identity.chip_id())
+  catch
+    _kind, _reason -> "Badge: unknown"
   end
 
   defp line(text), do: {:text, 4, Theme.height() - 18, :default16px, Theme.fg(), Theme.bg(), text}

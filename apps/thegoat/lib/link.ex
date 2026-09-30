@@ -9,12 +9,17 @@ defmodule Badge.App.Thegoat.Link do
 
   It sends `Badge.UI`, which hands them to the page on screen:
 
-    * `{:thegoat, :up}` once the server has put this badge in a room, and
-      `{:thegoat, :down}` when the connection is lost
+    * `{:thegoat, :ready}` when the connection is up but this badge is not in a room,
+      `{:thegoat, :up}` once the server has put it in one, and `{:thegoat, :down}` when
+      the connection is lost
     * `{:thegoat, {:players, [{x, y, colour}], goat}}` once a second: everyone else,
       and the goat, `{x, y, hunting}` or nil
     * `{:thegoat, :caught}` when the goat has caught this badge; `respawn/0` says it
       is back
+
+  The room is only joined while it is wanted: from `join/0` until `leave/0`, which goes out
+  of the room at once and frees its slot while the connection stays open. The menu is out
+  of the room, so nobody sees this badge and the goat cannot catch it.
 
   The relay is the `thegoat_url` NVS key, or a default, and the token it asks for
   the `thegoat_token` key.
@@ -59,6 +64,14 @@ defmodule Badge.App.Thegoat.Link do
   @spec close() :: :ok
   def close, do: GenServer.cast(__MODULE__, :close)
 
+  @doc "Joins a room, now if the connection is up and otherwise as soon as it is."
+  @spec join() :: :ok
+  def join, do: GenServer.cast(__MODULE__, :join)
+
+  @doc "Goes out of the room, and stays out until `join/0`."
+  @spec leave() :: :ok
+  def leave, do: GenServer.cast(__MODULE__, :leave)
+
   @doc "Tells the server where this badge stands. Dropped while not in a room."
   @spec publish(integer, integer) :: :ok
   def publish(x, y), do: GenServer.cast(__MODULE__, {:publish, x, y})
@@ -71,7 +84,7 @@ defmodule Badge.App.Thegoat.Link do
   def init(:ok) do
     start_ticker()
 
-    {:ok, %{want: false, port: nil, slot: nil, joins: 0, ref: 0, beat: 0}}
+    {:ok, %{want: false, room: false, connected: false, port: nil, slot: nil, joins: 0, ref: 0, beat: 0}}
   end
 
   @impl true
@@ -80,7 +93,26 @@ defmodule Badge.App.Thegoat.Link do
   @impl true
   def handle_cast(:open, %{want: true} = state), do: {:noreply, state}
   def handle_cast(:open, state), do: {:noreply, connect(%{state | want: true})}
-  def handle_cast(:close, state), do: {:noreply, shut(%{state | want: false})}
+  def handle_cast(:close, state), do: {:noreply, shut(%{state | want: false, room: false})}
+
+  def handle_cast(:join, %{slot: nil, connected: true} = state) do
+    state = %{state | room: true, joins: state.joins + 1}
+    send_frame(state.port, Room.join(join_ref(state)))
+
+    {:noreply, state}
+  end
+
+  def handle_cast(:join, state), do: {:noreply, %{state | room: true}}
+
+  def handle_cast(:leave, %{slot: slot} = state) when slot != nil do
+    state = %{state | room: false, ref: state.ref + 1, slot: nil}
+    send_frame(state.port, Room.leave(join_ref(state), Integer.to_string(state.ref)))
+    send(Badge.UI, {:thegoat, :ready})
+
+    {:noreply, state}
+  end
+
+  def handle_cast(:leave, state), do: {:noreply, %{state | room: false}}
 
   def handle_cast({:publish, x, y}, %{slot: slot, port: port} = state) when slot != nil do
     state = %{state | ref: state.ref + 1}
@@ -107,8 +139,13 @@ defmodule Badge.App.Thegoat.Link do
   # driver's port term is not the one open/4 returned, so a pinned match drops every
   # message without a word.
   def handle_info({:websocket, _port, :connected}, %{want: true} = state) do
-    state = %{state | joins: state.joins + 1, slot: nil}
-    send_frame(state.port, Room.join(join_ref(state)))
+    state = %{state | joins: state.joins + 1, slot: nil, connected: true}
+
+    if state.room do
+      send_frame(state.port, Room.join(join_ref(state)))
+    else
+      send(Badge.UI, {:thegoat, :ready})
+    end
 
     {:noreply, state}
   end
@@ -120,6 +157,13 @@ defmodule Badge.App.Thegoat.Link do
   def handle_info({:websocket, _port, {:closed, _reason}}, state), do: {:noreply, down(state)}
   def handle_info({:websocket, _port, {:error, _reason}}, state), do: {:noreply, down(state)}
   def handle_info(_message, state), do: {:noreply, state}
+
+  # A join that was answered after leaving was asked for: out again, and not said to the page.
+  defp heard({:joined, _slot}, %{room: false} = state) do
+    state = %{state | ref: state.ref + 1}
+    send_frame(state.port, Room.leave(join_ref(state), Integer.to_string(state.ref)))
+    state
+  end
 
   defp heard({:joined, slot}, state) do
     :io.format(~c"Goat game: joined the relay, slot ~p~n", [slot])
@@ -172,8 +216,8 @@ defmodule Badge.App.Thegoat.Link do
   defp with_token(opts, value), do: %{opts | url: opts.url <> "&token=" <> value}
 
   defp down(state) do
-    if state.slot != nil, do: send(Badge.UI, {:thegoat, :down})
-    %{state | slot: nil}
+    if state.slot != nil or state.connected, do: send(Badge.UI, {:thegoat, :down})
+    %{state | slot: nil, connected: false}
   end
 
   defp shut(%{port: nil} = state), do: state
